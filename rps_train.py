@@ -1,73 +1,61 @@
-import numpy as np
 from pypaq.lipytools.printout import stamp, progress_
-import random
 import torch
 
-from rps_envy import ACT_SET, ACT_NAMES, reward_func
+from rps_envy import ACT_SET, ACT_NAMES, reward_func_vec
 from rps_agent import get_agents
-
 
 
 if __name__ == "__main__":
 
+    n_act = len(ACT_NAMES)
+
     agents = get_agents(
         #'opt_bad_gto',
-        'monpol_and_not',
+        #'monpol_and_not',
+        'monpol',
         st = stamp(letters=None),
     )
-    agents_names = list(agents.keys())
+    agent_name = list(agents.keys())
+    n_agents = len(agent_name)
 
-    n_batches = 5000
-    bs = 64
-    bix = 0
-    while bix < n_batches:
+    # bootstrap hist_policy - average agent policy (over all agents)
+    hist_policy = torch.Tensor([1]*n_act)/n_act
+    hist_policy = torch.tile(hist_policy,(n_agents,1))                                      # [agent,prob]
 
-        actions = {k:[] for k in agents_names}
-        rewards = {k:[] for k in agents_names}
-        mpols =   {k:[] for k in agents_names}
+    batch_size = 64 # number of games all x all, keep this even
+    n_batches = 50000
+    for batch_ix in range(n_batches):
 
-        while min([len(actions[k]) for k in agents_names]) < bs:
+        agent_policy_log = torch.stack([
+            agents[k](hist_policy)['logits'] for k in agent_name])                          # [agent,agent,prob]
 
-            if len(agents_names) > 1:
-                key_sel = random.sample(agents_names, 2)
-            else:
-                key_sel = agents_names * 2
+        dist = torch.distributions.Categorical(logits=agent_policy_log)
 
-            inp_sel = [agents[k].policy_mavg for k in reversed(key_sel)]
-            for k,i in zip(key_sel,inp_sel):
-                mpols[k].append(i)
+        # save hist_policy for next loop
+        hist_policy = torch.mean(dist.probs, dim=1)                                         # [agent,probs]
 
-            pol_sel = [agents[k](inp=i)['probs'].detach().cpu().numpy()
-                       for k,i in zip(key_sel,inp_sel)]
+        action = dist.sample((batch_size,))                                                 # [batch, agent,-> agent]
+        action_a, action_b = action[:batch_size//2], action[batch_size//2:].transpose(-2,-1)# [batch//2, agent_a,-> agent_b] [batch//2, agent_b,-> agent_a]
 
-            act_sel = [np.random.choice(ACT_SET, p=p) for p in pol_sel]
-            for k,a in zip(key_sel,act_sel):
-                actions[k].append(a)
+        reward_a, reward_b = reward_func_vec(action_a, action_b)                            # [batch//2, agent_a,-> agent_b] [batch//2, agent_b,-> agent_a]
 
-            rew_sel = reward_func(*act_sel)
-            for k,r in zip(key_sel,rew_sel):
-                rewards[k].append(r)
+        action = torch.concatenate([action_a, action_b.transpose(-2,-1)], dim=0)            # [batch, agent,-> agent]
+        reward = torch.concatenate([reward_a, reward_b.transpose(-2,-1)], dim=0)            # [batch, agent,-> agent]
+        action = torch.squeeze(torch.concatenate(torch.split(action, 1, dim=0), dim=-1))    # [agent,-> agent*batch]
+        reward = torch.squeeze(torch.concatenate(torch.split(reward, 1, dim=0), dim=-1))    # [agent,-> agent*batch]
 
-        for k in mpols:
-            mpols[k] = torch.stack(mpols[k])
+        hist_policy_repeat = hist_policy.repeat(batch_size, 1)                              # [agent*batch,prob]
+        reward_mean = reward.float().mean(dim=-1)
+        for ix,k in enumerate(agent_name):
 
-        for k in actions:
-            actions[k] = torch.Tensor(actions[k]).long()
-
-        for k in rewards:
-            rewards[k] = torch.Tensor(rewards[k]).long()
-
-        for k in agents_names:
-
-            out = agents[k].backward(action=actions[k], reward=rewards[k], inp=mpols[k])
+            out = agents[k].backward(action=action[ix], reward=reward[ix], inp=hist_policy_repeat)
 
             agents[k].log_TB(out['loss'],               tag='opt/loss')
             agents[k].log_TB(out['gg_norm'],            tag='opt/gg_norm')
 
             agents[k].log_TB(agents[k].baseLR,          tag='opt/baseLR')
-            agents[k].log_TB(rewards[k].float().mean(), tag='policy/reward')
+            agents[k].log_TB(reward_mean[ix],           tag='policy/reward')
             for aix,anm in zip(ACT_SET,ACT_NAMES):
-                agents[k].log_TB(agents[k].policy_mavg[aix], tag=f'policy/{anm}_mavg')
+                agents[k].log_TB(hist_policy[ix][aix],  tag=f'policy/{anm}')
 
-        bix += 1
-        progress_(current=bix, total=n_batches, prefix='TR:', show_fract=True)
+        progress_(current=batch_ix, total=n_batches, prefix='TR:', show_fract=True)

@@ -21,9 +21,12 @@ class RPSAgent(Module):
     def __init__(
             self,
             n_actions:int,
-            monpol=     True,
+            monpol=     True,   # monitor (or not) opponent policy (given as inp)
             baseLR=     1e-3,
             device=     None,
+            opt_class=  torch.optim.Adam,
+            opt_alpha=  0.7,
+            opt_beta=   0.5,
             **kwargs):
         super().__init__(**kwargs)
         self.inp_pad = torch.Tensor([1]*n_actions) / n_actions
@@ -33,15 +36,14 @@ class RPSAgent(Module):
         self.logits = LayDense(20,n_actions,activation=None)
 
         self.monpol = monpol
-        self.policy_mavg = torch.Tensor([1]*n_actions) / n_actions
-        self.policy_mavg = self.policy_mavg.to('cuda:1')  # TODO
 
-    def forward(self, inp:Optional[TNS]=None, force_inp=False) -> DTNS:
+    def forward(self, inp:Optional[TNS]=None) -> DTNS:
 
-        if not self.monpol and not force_inp:
-            inp = None
         if inp is None:
             inp = self.inp_pad
+        else:
+            if not self.monpol:
+                inp = self.inp_pad.repeat(len(inp), 1)
 
         md = self.lay(inp)
         lg = self.logits(md)
@@ -49,21 +51,14 @@ class RPSAgent(Module):
         dist = torch.distributions.Categorical(logits=lg)
         probs = dist.probs
 
-        # update policy_mavg only when running test (not train)
-        if len(probs.shape) == 1:
-            self.policy_mavg = 0.99 * self.policy_mavg + 0.01 * probs
-
         return {'logits': lg, 'probs': probs}
 
     def loss(self, action, reward, inp:Optional[TNS]=None) -> DTNS:
 
-        if not self.monpol:
-            inp = None
         if inp is None:
-            inp = self.inp_pad
-            inp = inp.repeat(len(action), 1)
+            inp = self.inp_pad.repeat(len(action), 1)
 
-        out = self(inp, force_inp=True)
+        out = self(inp)
         actor_ce = torch.nn.functional.cross_entropy(
             input=      out['logits'],
             target=     action,
@@ -93,10 +88,6 @@ class FAgent:
         self.train_step += 1
         return {'loss':0, 'gg_norm':0}
 
-    @property
-    def policy_mavg(self):
-        return self.probs
-
     def log_TB(self, value, tag:str, step:Optional[int]=None):
         """ logs value to TB """
         if step is None:
@@ -104,23 +95,20 @@ class FAgent:
         self._TBwr.add(value=value, tag=tag, step=step)
 
 
-class RPSA_MOTorch(MOTorch):
-    @property
-    def policy_mavg(self):
-        return self.module.policy_mavg
+def get_agents(setup:str, st:str, rand=True):
 
-
-def get_agents(setup:str, st:str):
+    seed = 123
 
     if setup == 'opt_bad_gto':
 
         n_opt_agents = 2
         lrr = [5e-4, 5e-5]
-        agents = {f'a_{st}_{x:02}': RPSA_MOTorch(
+        agents = {f'a_{st}_{x:02}': MOTorch(
             module_type=    RPSAgent,
             name=           f'a_{st}_{x:02}',
             n_actions=      len(ACT_SET),
             monpol=         bool(x % 2),
+            seed=           random.randint(0, 100000) if rand else seed,
             #baseLR=         (lrr[0]+random.random()*(lrr[1]-lrr[0])),
         ) for x in range(n_opt_agents)}
 
@@ -132,11 +120,26 @@ def get_agents(setup:str, st:str):
 
         n_agents = 10
         lrr = [1e-3, 5e-5]
-        agents = {f'a_{st}_{x:02}': RPSA_MOTorch(
+        agents = {f'a_{st}_{x:02}': MOTorch(
             module_type=    RPSAgent,
             name=           f'a_{st}_{x:02}',
             n_actions=      len(ACT_SET),
             monpol=         x < 5,
+            seed=           random.randint(0, 100000) if rand else seed,
+            baseLR=         (lrr[0]+random.random()*(lrr[1]-lrr[0])),
+        ) for x in range(n_agents)}
+        return agents
+
+    if setup == 'monpol':
+
+        n_agents = 10
+        lrr = [1e-3, 5e-5]
+        agents = {f'a_{st}_{x:02}': MOTorch(
+            module_type=    RPSAgent,
+            name=           f'a_{st}_{x:02}',
+            n_actions=      len(ACT_SET),
+            monpol=         True,
+            seed=           random.randint(0, 100000) if rand else seed,
             baseLR=         (lrr[0]+random.random()*(lrr[1]-lrr[0])),
         ) for x in range(n_agents)}
         return agents

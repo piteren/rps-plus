@@ -1,4 +1,3 @@
-numpy
 pypaq
 torch
 torchness
