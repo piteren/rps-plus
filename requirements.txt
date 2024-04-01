@@ -1,0 +1,4 @@
+numpy
+pypaq
+torch
+torchness
