@@ -4,7 +4,7 @@ from torchness.types import TNS, DTNS
 from torchness.motorch import Module, MOTorch
 from torchness.layers import LayDense
 from torchness.tbwr import TBwr
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from rps_envy import ACT_SET
 
@@ -21,7 +21,7 @@ class RPSAgent(Module):
     def __init__(
             self,
             n_actions:int,
-            monpol=     True,   # monitor (or not) opponent policy (given as inp)
+            monpol=     True,   # monitor (or not) opponent policy (given as inp:TNS)
             baseLR=     1e-3,
             device=     None,
             opt_class=  torch.optim.Adam,
@@ -72,17 +72,20 @@ class FAgent:
     def __init__(self, name:str, probs:List[float], save_topdir='_models'):
         self.name = name
         self.save_topdir = save_topdir
-        self.probs = torch.Tensor(probs)
+        self.logits = torch.log(torch.Tensor(probs)).to('cuda:1')
         self.baseLR = 0
 
         self.train_step = 0
         self._TBwr = TBwr(logdir=f'{self.save_topdir}/{self.name}')
 
-    def __call__(self, *args, **kwargs):
-        return self.forward()
+    def __call__(self, inp:Optional[TNS], *args, **kwargs):
+        return self.forward(inp)
 
-    def forward(self):
-        return {'probs': self.probs}
+    def forward(self, inp:Optional[TNS]):
+        logits = self.logits
+        if inp is not None:
+            logits = logits.repeat(len(inp), 1)
+        return {'logits': logits}
 
     def backward(self, *args, **kwargs):
         self.train_step += 1
@@ -95,51 +98,24 @@ class FAgent:
         self._TBwr.add(value=value, tag=tag, step=step)
 
 
-def get_agents(setup:str, st:str, rand=True):
+def get_agents(
+        stamp: str,
+        n_opt_monpol: int,
+        n_opt: int,
+        fixed_policies: Tuple[Tuple,...]=   (),
+        lr_range=                           (3e-3, 1e-4),
+        rand=                               True):
 
-    seed = 123
+    agents = {f'a_{stamp}_{x:02}': MOTorch(
+        module_type=    RPSAgent,
+        name=           f'a_{stamp}_{x:02}',
+        n_actions=      len(ACT_SET),
+        monpol=         x < n_opt_monpol,
+        seed=           random.randint(0, 100000) if rand else 123,
+        baseLR=         (lr_range[0]+random.random()*(lr_range[1]-lr_range[0])),
+    ) for x in range(n_opt_monpol + n_opt)}
 
-    if setup == 'opt_bad_gto':
+    for ix,policy in enumerate(fixed_policies):
+        agents[f'a_{stamp}_f{ix}'] = FAgent(name=f'a_{stamp}_f{ix}', probs=policy)
 
-        n_opt_agents = 2
-        lrr = [5e-4, 5e-5]
-        agents = {f'a_{st}_{x:02}': MOTorch(
-            module_type=    RPSAgent,
-            name=           f'a_{st}_{x:02}',
-            n_actions=      len(ACT_SET),
-            monpol=         bool(x % 2),
-            seed=           random.randint(0, 100000) if rand else seed,
-            #baseLR=         (lrr[0]+random.random()*(lrr[1]-lrr[0])),
-        ) for x in range(n_opt_agents)}
-
-        agents[f'a_{st}_fa'] = FAgent(name=f'a_{st}_fa', probs=[0.4, 0.4, 0.2])
-        agents[f'a_{st}_fb'] = FAgent(name=f'a_{st}_fb', probs=[0.35, 0.35, 0.3])
-        return agents
-
-    if setup == 'monpol_and_not':
-
-        n_agents = 10
-        lrr = [1e-3, 5e-5]
-        agents = {f'a_{st}_{x:02}': MOTorch(
-            module_type=    RPSAgent,
-            name=           f'a_{st}_{x:02}',
-            n_actions=      len(ACT_SET),
-            monpol=         x < 5,
-            seed=           random.randint(0, 100000) if rand else seed,
-            baseLR=         (lrr[0]+random.random()*(lrr[1]-lrr[0])),
-        ) for x in range(n_agents)}
-        return agents
-
-    if setup == 'monpol':
-
-        n_agents = 10
-        lrr = [1e-3, 5e-5]
-        agents = {f'a_{st}_{x:02}': MOTorch(
-            module_type=    RPSAgent,
-            name=           f'a_{st}_{x:02}',
-            n_actions=      len(ACT_SET),
-            monpol=         True,
-            seed=           random.randint(0, 100000) if rand else seed,
-            baseLR=         (lrr[0]+random.random()*(lrr[1]-lrr[0])),
-        ) for x in range(n_agents)}
-        return agents
+    return agents

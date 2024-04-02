@@ -21,7 +21,7 @@ def reward_func(action_a:int, action_b:int, plus:int=PLUS) -> Tuple[int,int]:
     return reward_a, -reward_a
 
 
-def reward_func_vec(action_a:TNS, action_b:TNS, plus:int=PLUS) -> Tuple[TNS]:
+def reward_func_vec(action_a:TNS, action_b:TNS, plus:int=PLUS) -> Tuple[TNS,TNS]:
     """ vectorised version of reward function """
     reward_a = torch.where(
         condition=  (torch.gt(action_a,action_b) & ~((action_a == 2) & (action_b == 0))) | (action_a == 0) & (action_b == 2),
