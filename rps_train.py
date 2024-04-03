@@ -1,4 +1,4 @@
-from pypaq.lipytools.printout import stamp, progress_
+from pypaq.lipytools.printout import stamp, ProgBar
 import torch
 
 from rps_envy import ACT_SET, ACT_NAMES, reward_func_vec
@@ -7,7 +7,6 @@ from rps_agent import get_agents
 setups = {
     #'8_0':          {'n_opt_monpol':8, 'n_opt':0},
     #'5_5':          {'n_opt_monpol':5, 'n_opt':5},
-    #'5_5_bs256':    {'n_opt_monpol':5, 'n_opt':5, 'batch_size':256},
     #'1_9':          {'n_opt_monpol':1, 'n_opt':9},
     #'0_8':          {'n_opt_monpol':0, 'n_opt':8},
     '1_1_2fixed':   {'n_opt_monpol':1, 'n_opt':1, 'fixed_policies':((0.4,0.4,0.2),(0.35,0.35,0.3))}
@@ -15,14 +14,16 @@ setups = {
 
 if __name__ == "__main__":
 
+    device = 'cpu'
+    #device = 'cuda'
     n_act = len(ACT_NAMES)
 
     for sk in setups:
         setup = setups[sk]
-        batch_size = setup.pop('batch_size',64)  # number of games all x all, keep this even
+        batch_size = setup.pop('batch_size',256)  # number of games all x all, keep this even
         n_batches = 10000
 
-        agents = get_agents(stamp=f'{sk}_{stamp(letters=None)}', **setup)
+        agents = get_agents(stamp=f'{sk}_{stamp(letters=None)}', device=device, **setup)
         agent_name = list(agents.keys())
         n_agents = len(agent_name)
 
@@ -30,6 +31,7 @@ if __name__ == "__main__":
         hist_policy = torch.Tensor([1]*n_act)/n_act
         hist_policy = torch.tile(hist_policy,(n_agents,1))                                      # [agent,prob]
 
+        pb = ProgBar(total=n_batches, show_fract=True, show_speed=True, show_eta=True)
         for batch_ix in range(n_batches):
 
             agent_policy_log = torch.stack([
@@ -64,4 +66,4 @@ if __name__ == "__main__":
                 for aix,anm in zip(ACT_SET,ACT_NAMES):
                     agents[k].log_TB(hist_policy[ix][aix],  tag=f'policy/{anm}')
 
-            progress_(current=batch_ix, total=n_batches, prefix='TR:', show_fract=True)
+            pb(current=batch_ix, prefix='TR:')
