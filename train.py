@@ -33,6 +33,12 @@ SETUPS = {
         'randomize_fixed':  True,
         'plus':             1,
     },
+    '4_4_4random': {
+        'n_opt_monpol':     4,
+        'n_opt':            4,
+        'fixed_policies':   tuple([(1/3,1/3,1/3)]*4),
+        'randomize_fixed':  True,
+    }
 }
 
 
@@ -43,21 +49,22 @@ if __name__ == "__main__":
     n_act = len(ACT_NAMES)
 
     for sk in [
-        '0_8',
-        '0_8_noplus',
-        '1_7',
-        '4_4',
-        '4_4_noplus',
-        '8_0',
-        '1_1_2fix',
-        '1_1_2fix_noplus',
-        '1_7random',
-        '1_7random_noplus',
+        #'0_8',
+        #'0_8_noplus',
+        #'1_7',
+        #'4_4',
+        #'4_4_noplus',
+        #'8_0',
+        #'1_1_2fix',
+        #'1_1_2fix_noplus',
+        #'1_7random',
+        #'1_7random_noplus',
+        '4_4_4random',
     ]:
 
         d = {
             'batch_size':       256,
-            'n_batches':        5000,
+            'n_batches':        50000,
             'randomize_fixed':  False,
             'plus':             2}
 
