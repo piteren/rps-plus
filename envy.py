@@ -3,7 +3,7 @@ import torch
 from torchness.types import TNS
 
 PLUS = 2
-ACT_NAMES = ['0_ROCK','1_PAPER','2_SCISSORS']
+ACT_NAMES = ['ROCK','PAPER','SCISSORS']
 ACT_SET = list(range(len(ACT_NAMES)))
 
 
