@@ -56,21 +56,21 @@ if __name__ == "__main__":
     for sk in [
         #'0_8',
         #'0_8_noplus',
-        #'1_7',
+        '1_7',
         #'4_4',
         #'4_4_noplus',
         #'8_0',
         #'1_1_2fix',
         #'1_1_2fix_noplus',
         #'1_7random',
-        '1nop_7random',
+        #'1nop_7random',
         #'1_7random_noplus',
         #'4_4_4random',
     ]:
 
         d = {
             'batch_size':       256,
-            'n_batches':        5000,
+            'n_batches':        10000,#5000,
             'randomize_fixed':  False,
             'plus':             2}
 
@@ -84,7 +84,7 @@ if __name__ == "__main__":
         agent_name = list(agents.keys())
         n_agents = len(agent_name)
 
-        policy_obs = None # agent policy (estimation) against all agents, using some state observation
+        agents_policy = None # agents policy (estimation / observed in the last batch) against all agents, using some state observation
 
         pb = ProgBar(total=d['n_batches'], show_fract=True, show_speed=True, show_eta=True)
         for batch_ix in range(d['n_batches']):
@@ -95,24 +95,25 @@ if __name__ == "__main__":
                         agents[k].randomize_policy()
 
             # try to estimate/update agent policy (with 10 random states given)
-            if policy_obs is None or d['randomize_fixed']:
-                agent_policy_log = torch.stack([
-                    agents[k](op_policy=get_random_policy(10))['logits'] for k in agent_name])  # [agent,r10,logits]
+            if agents_policy is None or d['randomize_fixed']:
+                op_policy = get_random_policy(10)
+                agent_policy_log = torch.stack(                                                 # [agent,r10,logits]
+                    [agents[k](op_policy=op_policy)['logits'] for k in agent_name])
                 dist = torch.distributions.Categorical(logits=agent_policy_log)
-                policy_obs = torch.mean(dist.probs, dim=1)                                      # [agent,probs]
+                agents_policy = torch.mean(dist.probs, dim=1)                                   # [agent,probs]
 
             # get agent policy_log against each other policy_obs
-            agent_policy_log = torch.stack([
-                agents[k](op_policy=policy_obs)['logits'] for k in agent_name])                 # [agent,agent,logits]
+            agent_policy_log = torch.stack(
+                tensors=[agents[k](op_policy=agents_policy)['logits'] for k in agent_name])     # [agent,agent,logits]
 
             dist = torch.distributions.Categorical(logits=agent_policy_log)
 
             # update policy observation
             probs = dist.probs                                                                  # [agent,agent,probs]
-            policy_obs = torch.mean(probs, dim=1)                                               # [agent,probs]
+            agents_policy = torch.mean(probs, dim=1)                                            # [agent,probs]
             policy_obs_std = torch.std(probs, dim=1)                                            # [agent,probs_std]
 
-            action = dist.sample((d['batch_size'],))                                            # [batch, agent,-> agent]
+            action = dist.sample(torch.Size((d['batch_size'],)))                                # [batch, agent,-> agent]
             action_a = action[:d['batch_size'] // 2]                                            # [batch//2, agent_a,-> agent_b]
             action_b = action[d['batch_size'] // 2:].transpose(-2, -1)                          # as above
             reward_a, reward_b = reward_func_vec(action_a, action_b, plus=d['plus'])            # as action_a & b
@@ -122,7 +123,7 @@ if __name__ == "__main__":
             action = torch.squeeze(torch.concatenate(torch.split(action, 1, dim=0), dim=-1))    # [agent,-> agent*batch]
             reward = torch.squeeze(torch.concatenate(torch.split(reward, 1, dim=0), dim=-1))    # [agent,-> agent*batch]
 
-            policy_obs_repeat = policy_obs.repeat(d['batch_size'], 1)                           # [agent*batch,prob]
+            policy_obs_repeat = agents_policy.repeat(d['batch_size'], 1)                           # [agent*batch,prob]
             reward_mean = reward.float().mean(dim=-1)
             for ix,k in enumerate(agent_name):
 
@@ -130,11 +131,12 @@ if __name__ == "__main__":
 
                 agents[k].log_TB(out['loss'],                 tag='opt/loss')
                 agents[k].log_TB(out['gg_norm'],              tag='opt/gg_norm')
+                #agents[k].log_histogram_TB(out['dense_out'],  tag='agent/dense_out')
 
                 agents[k].log_TB(agents[k].baseLR,            tag='opt/baseLR')
                 agents[k].log_TB(reward_mean[ix],             tag='policy/reward')
                 for aix,anm in zip(ACT_SET,ACT_NAMES):
-                    agents[k].log_TB(policy_obs[ix][aix],     tag=f'policy/p{aix}_{anm}')
+                    agents[k].log_TB(agents_policy[ix][aix],  tag=f'policy/p{aix}_{anm}')
                     agents[k].log_TB(policy_obs_std[ix][aix], tag=f'policy/pstd{aix}_{anm}')
 
             pb(current=batch_ix+1, prefix='TR:')

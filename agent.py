@@ -28,9 +28,9 @@ class RPSAgent(Module):
             hidden_width: int=      30,
             activation=             torch.nn.Tanh,
             lay_norm=               False,
-            use_op=                 True,           # use given (for forward) opponent policy
+            use_op=                 True,           # use opponent policy (given for forward)
             baseLR=                 1e-4,
-            reward_scale: float=    0.1,            # scales given (for update) reward
+            reward_scale: float=    0.1,            # scales reward (given for update)
             opt_class=              torch.optim.Adam,
             #opt_alpha=              0.7,
             #opt_beta=               0.5,
@@ -91,9 +91,10 @@ class RPSAgent(Module):
         logits = self.logits(out)
         dist = torch.distributions.Categorical(logits=logits)
         return {
-            'logits': logits,
-            'probs':  dist.probs,
-            'zeroes': torch.cat(zsL).detach() if self.do_zeroes else None}
+            'dense_out': out,
+            'logits':    logits,
+            'probs':     dist.probs,
+            'zeroes':    torch.cat(zsL).detach() if self.do_zeroes else None}
 
     def loss(self, action:TNS, reward:TNS, op_policy:TNS) -> DTNS:
         out = self(op_policy)
@@ -141,10 +142,14 @@ class FixedAgent:
         return {'loss':0, 'gg_norm':0}
 
     def log_TB(self, value, tag:str, step:Optional[int]=None):
-        """ logs value to TB """
         if step is None:
             step = self.train_step
         self._TBwr.add(value=value, tag=tag, step=step)
+
+    def log_histogram_TB(self, values, tag:str, step:Optional[int]=None):
+        if step is None:
+            step = self.train_step
+        self._TBwr.add_histogram(values=values, tag=tag, step=step)
 
 
 def get_agents(
