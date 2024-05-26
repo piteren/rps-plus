@@ -4,14 +4,21 @@ from torchness.types import TNS, DTNS
 from torchness.motorch import MOTorch, Module
 from torchness.layers import LayDense,zeroes
 from torchness.tbwr import TBwr
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple, Dict, Union, Sequence
 
 from envy import ACT_SET
 
 # TODO:
 #  experiment with hpms
 
+def get_random_policy(n:Optional[int]=None, n_act:int=len(ACT_SET)) -> TNS:
+    if n: probs = torch.rand(n,n_act)
+    else: probs = torch.rand(n_act)
+    return probs / probs.sum(dim=-1, keepdim=True)
+
+
 class RPSAgent(Module):
+    """ RPS RL agent """
 
     def __init__(
             self,
@@ -21,9 +28,9 @@ class RPSAgent(Module):
             hidden_width: int=      30,
             activation=             torch.nn.Tanh,
             lay_norm=               False,
-            monpol=                 True,   # monitor (or not) opponent policy (given as inp:TNS)
+            use_op=                 True,           # use given (for forward) opponent policy
             baseLR=                 1e-4,
-            reward_scale: float=    0.1,
+            reward_scale: float=    0.1,            # scales given (for update) reward
             opt_class=              torch.optim.Adam,
             #opt_alpha=              0.7,
             #opt_beta=               0.5,
@@ -56,17 +63,20 @@ class RPSAgent(Module):
             activation=     None,
             bias=           False)
         
-        self.inp_pad = torch.Tensor([1]*num_classes).to(device) / num_classes
-        self.monpol = monpol
+        self.op_policy_pad = torch.Tensor([1]*num_classes).to(device) / num_classes
+        self.use_op = use_op
+
         self.reward_scale = reward_scale
         self.do_zeroes = do_zeroes
 
-    def forward(self, inp:TNS) -> DTNS:
+    def forward(self, op_policy:TNS) -> DTNS:
+        """ op_policy always will be given (project design),
+        but self.use_op decides whether to use it or not """
 
-        if not self.monpol:
-            inp = self.inp_pad.repeat(len(inp), 1)
+        if not self.use_op:
+            op_policy = self.op_policy_pad.repeat(len(op_policy), 1)
 
-        out = inp
+        out = op_policy
         if self.ln:
             out = self.ln(out)
 
@@ -85,8 +95,8 @@ class RPSAgent(Module):
             'probs':  dist.probs,
             'zeroes': torch.cat(zsL).detach() if self.do_zeroes else None}
 
-    def loss(self, action:TNS, reward:TNS, inp:TNS) -> DTNS:
-        out = self(inp)
+    def loss(self, action:TNS, reward:TNS, op_policy:TNS) -> DTNS:
+        out = self(op_policy)
         actor_ce = torch.nn.functional.cross_entropy(
             input=      out['logits'],
             target=     action,
@@ -99,10 +109,11 @@ class FixedAgent:
 
     def __init__(
             self,
-            name:str,
-            probs:List[float],
+            name: str,
+            probs: Sequence[float],
             save_topdir=    '_models',
             device=         'cuda'):
+
         self.name = name
         self.save_topdir = save_topdir
         self.device = device
@@ -112,18 +123,17 @@ class FixedAgent:
         self.train_step = 0
         self._TBwr = TBwr(logdir=f'{self.save_topdir}/{self.name}')
 
-    def __call__(self, inp:Optional[TNS], *args, **kwargs):
-        return self.forward(inp)
+    def __call__(self, op_policy:Optional[TNS], *args, **kwargs):
+        return self.forward(op_policy)
 
     def randomize_policy(self):
-        probs = torch.rand(3)
-        probs = probs / sum(probs)
-        self.logits = torch.log(probs).to(self.device)
+        """ changes policy of the agent """
+        self.logits = torch.log(get_random_policy()).to(self.device)
 
-    def forward(self, inp:Optional[TNS]):
+    def forward(self, op_policy:Optional[TNS]):
         logits = self.logits
-        if inp is not None:
-            logits = logits.repeat(len(inp), 1)
+        if op_policy is not None:
+            logits = logits.repeat(len(op_policy), 1)
         return {'logits': logits}
 
     def backward(self, *args, **kwargs):
@@ -137,15 +147,9 @@ class FixedAgent:
         self._TBwr.add(value=value, tag=tag, step=step)
 
 
-def get_random_policy(n:Optional[int]=None) -> TNS:
-    if n: probs = torch.rand(n,3)
-    else: probs = torch.rand(3)
-    return probs / probs.sum(dim=-1, keepdim=True)
-
-
 def get_agents(
         stamp: str,
-        n_opt_monpol: int=                  0,
+        n_opt_use_op: int=                  0,
         n_opt: int=                         0,
         fixed_policies: Tuple[Tuple,...]=   (),
         lr_range=                           (1e-3, 3e-4),
@@ -153,15 +157,15 @@ def get_agents(
         device=                             'cuda',
 ):
 
-    agents = {f'a_{stamp}_{x:02}': MOTorch(
+    agents :Dict[str,Union[MOTorch,FixedAgent]] = {f'a_{stamp}_{x:02}': MOTorch(
         module_type=    RPSAgent,
         name=           f'a_{stamp}_{x:02}',
         num_classes=    len(ACT_SET),
-        monpol=         x < n_opt_monpol,
+        use_op=         x < n_opt_use_op,
         seed=           random.randint(0, 100000) if rand else 123,
         baseLR=         (lr_range[0]+random.random()*(lr_range[1]-lr_range[0])),
         device=         device,
-    ) for x in range(n_opt_monpol + n_opt)}
+    ) for x in range(n_opt_use_op + n_opt)}
 
     for ix,policy in enumerate(fixed_policies):
         agents[f'a_{stamp}_f{ix}'] = FixedAgent(name=f'a_{stamp}_f{ix}', probs=policy, device=device)

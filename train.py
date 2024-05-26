@@ -4,37 +4,42 @@ import torch
 from envy import ACT_SET, ACT_NAMES, reward_func_vec
 from agent import get_agents, FixedAgent, get_random_policy
 
-SETUPS = {
+CONFIGS = {
     '0_8':          {                  'n_opt':8},
     '0_8_noplus':   {                  'n_opt':8, 'plus':1},
-    '1_7':          {'n_opt_monpol':1, 'n_opt':7},
-    '4_4':          {'n_opt_monpol':4, 'n_opt':4},
-    '4_4_noplus':   {'n_opt_monpol':4, 'n_opt':4, 'plus':1},
-    '8_0':          {'n_opt_monpol':8},
-    '1_1_2fix': { # ...against two fixed ones, where one has optimal policy against unknown player
-        'n_opt_monpol':     1,
+    '1_7':          {'n_opt_use_op':1, 'n_opt':7},
+    '4_4':          {'n_opt_use_op':4, 'n_opt':4},
+    '4_4_noplus':   {'n_opt_use_op':4, 'n_opt':4, 'plus':1},
+    '8_0':          {'n_opt_use_op':8},
+    '1_1_2fix': { # against two fixed (one has optimal policy)
+        'n_opt_use_op':     1,
         'n_opt':            1,
         'fixed_policies':   ((0.4,0.4,0.2), (0.35,0.35,0.3)),
     },
-    '1_1_2fix_noplus': { # ...against two fixed ones, without plus
-        'n_opt_monpol':     1,
+    '1_1_2fix_noplus': { # against two fixed ones, without plus
+        'n_opt_use_op':     1,
         'n_opt':            1,
         'fixed_policies':   ((0.5,0.3,0.2), (0.2,0.7,0.1)),
         'plus':             1,
     },
-    '1_7random': { # 1 monpol against 9 fixed randomized
-        'n_opt_monpol':     1,
+    '1_7random': { # 1 use_op against 7 fixed randomized
+        'n_opt_use_op':     1,
         'fixed_policies':   tuple([(1/3,1/3,1/3)]*7),
         'randomize_fixed':  True,
     },
-    '1_7random_noplus': { # 1 monpol against 9 fixed randomized, without plus
-        'n_opt_monpol':     1,
+    '1nop_7random': { # 1 not knowing against 7 fixed randomized
+        'n_opt':            1,
+        'fixed_policies':   tuple([(1/3,1/3,1/3)]*7),
+        'randomize_fixed':  True,
+    },
+    '1_7random_noplus': { # 1 use_op against 7 fixed randomized, without plus
+        'n_opt_use_op':     1,
         'fixed_policies':   tuple([(1/3,1/3,1/3)]*7),
         'randomize_fixed':  True,
         'plus':             1,
     },
     '4_4_4random': {
-        'n_opt_monpol':     4,
+        'n_opt_use_op':     4,
         'n_opt':            4,
         'fixed_policies':   tuple([(1/3,1/3,1/3)]*4),
         'randomize_fixed':  True,
@@ -58,17 +63,18 @@ if __name__ == "__main__":
         #'1_1_2fix',
         #'1_1_2fix_noplus',
         #'1_7random',
+        '1nop_7random',
         #'1_7random_noplus',
-        '4_4_4random',
+        #'4_4_4random',
     ]:
 
         d = {
             'batch_size':       256,
-            'n_batches':        50000,
+            'n_batches':        5000,
             'randomize_fixed':  False,
             'plus':             2}
 
-        setup = SETUPS[sk]
+        setup = CONFIGS[sk]
 
         for k in d:
             if k in setup:
@@ -91,13 +97,13 @@ if __name__ == "__main__":
             # try to estimate/update agent policy (with 10 random states given)
             if policy_obs is None or d['randomize_fixed']:
                 agent_policy_log = torch.stack([
-                    agents[k](inp=get_random_policy(10))['logits'] for k in agent_name])        # [agent,r10,logits]
+                    agents[k](op_policy=get_random_policy(10))['logits'] for k in agent_name])  # [agent,r10,logits]
                 dist = torch.distributions.Categorical(logits=agent_policy_log)
                 policy_obs = torch.mean(dist.probs, dim=1)                                      # [agent,probs]
 
             # get agent policy_log against each other policy_obs
             agent_policy_log = torch.stack([
-                agents[k](inp=policy_obs)['logits'] for k in agent_name])                       # [agent,agent,logits]
+                agents[k](op_policy=policy_obs)['logits'] for k in agent_name])                 # [agent,agent,logits]
 
             dist = torch.distributions.Categorical(logits=agent_policy_log)
 
@@ -120,7 +126,7 @@ if __name__ == "__main__":
             reward_mean = reward.float().mean(dim=-1)
             for ix,k in enumerate(agent_name):
 
-                out = agents[k].backward(action=action[ix], reward=reward[ix], inp=policy_obs_repeat)
+                out = agents[k].backward(action=action[ix], reward=reward[ix], op_policy=policy_obs_repeat)
 
                 agents[k].log_TB(out['loss'],                 tag='opt/loss')
                 agents[k].log_TB(out['gg_norm'],              tag='opt/gg_norm')
